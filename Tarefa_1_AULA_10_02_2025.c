@@ -10,6 +10,7 @@
 #include "lib/font.h"
 #include "pico/bootrom.h"
 
+// Definindo as portas e pinos
 #define I2C_PORT i2c1
 #define I2C_SDA 14
 #define I2C_SCL 15
@@ -20,12 +21,6 @@
 #define Botao_A 5
 #define LED_AZUL_PIN 12
 #define LED_VERMELHO_PIN 13
-#define botaoB 6
-
-// Função de interrupção para modo BOOTSEL com botão B
-void gpio_irq_handler(uint gpio, uint32_t events) {
-    reset_usb_boot(0, 0);
-}
 
 // Função para configurar o PWM para um LED
 void setup_pwm_for_led(uint gpio_pin, uint channel) {
@@ -36,22 +31,34 @@ void setup_pwm_for_led(uint gpio_pin, uint channel) {
     pwm_set_enabled(slice_num, true);
 }
 
+// Debouncing e estado dos LEDs
+volatile bool led_azul_on = true;
+volatile bool led_vermelho_on = true;
+volatile uint32_t last_interrupt_time = 0;
+
+// Função de interrupção para o Botão A
+void button_a_isr(uint gpio, uint32_t events) {
+    uint32_t interrupt_time = to_ms_since_boot(get_absolute_time());
+    if (interrupt_time - last_interrupt_time > 200) { // Debounce de 200ms
+        led_azul_on = !led_azul_on;
+        led_vermelho_on = !led_vermelho_on;
+        last_interrupt_time = interrupt_time;
+    }
+}
+
 int main() {
     stdio_init_all();
 
-    // Inicializando o modo BOOTSEL com botão B
-    gpio_init(botaoB);
-    gpio_set_dir(botaoB, GPIO_IN);
-    gpio_pull_up(botaoB);
-    gpio_set_irq_enabled_with_callback(botaoB, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
-
-    gpio_init(JOYSTICK_PB);
-    gpio_set_dir(JOYSTICK_PB, GPIO_IN);
-    gpio_pull_up(JOYSTICK_PB);
-
+    // Inicializando o Botão A com interrupção
     gpio_init(Botao_A);
     gpio_set_dir(Botao_A, GPIO_IN);
     gpio_pull_up(Botao_A);
+    gpio_set_irq_enabled_with_callback(Botao_A, GPIO_IRQ_EDGE_FALL, true, &button_a_isr);
+
+    // Inicializando o botão do joystick (sem interrupção por enquanto)
+    gpio_init(JOYSTICK_PB);
+    gpio_set_dir(JOYSTICK_PB, GPIO_IN);
+    gpio_pull_up(JOYSTICK_PB);
 
     // Inicializando PWM para LEDs azul e vermelho
     setup_pwm_for_led(LED_AZUL_PIN, PWM_CHAN_A);
@@ -79,8 +86,6 @@ int main() {
     char str_x[5];
     char str_y[5];
     bool cor = true;
-    bool led_azul_on = true;
-    bool led_vermelho_on = true;
 
     while (true) {
         adc_select_input(0);
@@ -105,17 +110,6 @@ int main() {
         } else if (adc_value_x > 2048) {
             brilho_vermelho = (uint8_t)((adc_value_x - 2048) * 255 / 2048);
         }
-
-        // Checa o estado do botão A para ativar ou desativar os LEDs
-        static bool botaoA_estado_ant = true;
-        if (gpio_get(Botao_A) == 0 && botaoA_estado_ant) {
-            sleep_ms(200);  // Debounce
-            if (gpio_get(Botao_A) == 0) {
-                led_azul_on = !led_azul_on;
-                led_vermelho_on = !led_vermelho_on;
-            }
-        }
-        botaoA_estado_ant = gpio_get(Botao_A);
 
         // Ajusta o brilho dos LEDs com base no estado
         pwm_set_chan_level(pwm_gpio_to_slice_num(LED_AZUL_PIN), PWM_CHAN_A, led_azul_on ? brilho_azul : 0);
