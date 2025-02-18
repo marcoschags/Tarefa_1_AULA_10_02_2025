@@ -1,20 +1,19 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "pico/stdlib.h"
-#include "hardware/pwm.h"
 #include "hardware/adc.h"
 #include "hardware/i2c.h"
 #include "lib/ssd1306.h"
 #include "lib/font.h"
-
-#define LED_1 11
-#define LED_2 12
-#define LED_3 13
-#define BTN_JOY 22
-#define BTN_A 5
-#define JOY_X 26
-#define JOY_Y 27
+#define I2C_PORT i2c1
 #define I2C_SDA 14
 #define I2C_SCL 15
+#define endereco 0x3C
+#define JOYSTICK_X_PIN 26  // GPIO para eixo X
+#define JOYSTICK_Y_PIN 27  // GPIO para eixo Y
+#define JOYSTICK_PB 22 // GPIO para botão do Joystick
+#define Botao_A 5 // GPIO para botão A
+
 
 //Trecho para modo BOOTSEL com botão B
 #include "pico/bootrom.h"
@@ -24,89 +23,79 @@ void gpio_irq_handler(uint gpio, uint32_t events)
   reset_usb_boot(0, 0);
 }
 
-volatile bool toggle_green = false;
-volatile bool toggle_leds = true;
-volatile int border_style = 0;
-ssd1306_t display;
+int main()
+{
+  // Para ser utilizado o modo BOOTSEL com botão B
+  gpio_init(botaoB);
+  gpio_set_dir(botaoB, GPIO_IN);
+  gpio_pull_up(botaoB);
+  gpio_set_irq_enabled_with_callback(botaoB, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
 
-void btn_joy_irq_handler(uint gpio, uint32_t events) {
-    toggle_green = !toggle_green;
-    border_style = (border_style + 1) % 3;
-    gpio_put(LED_1, toggle_green);  // Corrigido: LED_1 em vez de LED_GREEN
-}
+  gpio_init(JOYSTICK_PB);
+  gpio_set_dir(JOYSTICK_PB, GPIO_IN);
+  gpio_pull_up(JOYSTICK_PB); 
 
-void btn_a_irq_handler(uint gpio, uint32_t events) {
-    toggle_leds = !toggle_leds;
-}
+  gpio_init(Botao_A);
+  gpio_set_dir(Botao_A, GPIO_IN);
+  gpio_pull_up(Botao_A);
 
-void setup_pwm(uint gpio) {
-    gpio_set_function(gpio, GPIO_FUNC_PWM);
-    uint slice_num = pwm_gpio_to_slice_num(gpio);
-    pwm_set_wrap(slice_num, 4095);
-    pwm_set_chan_level(slice_num, pwm_gpio_to_channel(gpio), 0);
-    pwm_set_enabled(slice_num, true);
-}
+  // I2C Initialisation. Using it at 400Khz.
+  i2c_init(I2C_PORT, 400 * 1000);
 
-void set_pwm(uint gpio, uint level) {
-    uint slice_num = pwm_gpio_to_slice_num(gpio);
-    pwm_set_chan_level(slice_num, pwm_gpio_to_channel(gpio), level);
-}
+  gpio_set_function(I2C_SDA, GPIO_FUNC_I2C); // Set the GPIO pin function to I2C
+  gpio_set_function(I2C_SCL, GPIO_FUNC_I2C); // Set the GPIO pin function to I2C
+  gpio_pull_up(I2C_SDA); // Pull up the data line
+  gpio_pull_up(I2C_SCL); // Pull up the clock line
+  ssd1306_t ssd; // Inicializa a estrutura do display
+  ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT); // Inicializa o display
+  ssd1306_config(&ssd); // Configura o display
+  ssd1306_send_data(&ssd); // Envia os dados para o display
 
-void update_display(int x, int y) {
-    ssd1306_clear(&display);
-    int pos_x = (x * (128 - 8)) / 4095;
-    int pos_y = (y * (64 - 8)) / 4095;
-    ssd1306_draw_rect(&display, pos_x, pos_y, 8, 8, 1);
-    ssd1306_show(&display);
-}
+  // Limpa o display. O display inicia com todos os pixels apagados.
+  ssd1306_fill(&ssd, false);
+  ssd1306_send_data(&ssd);
 
-int main() {
-    stdio_init_all();
-    gpio_init(LED_1);
-    gpio_init(LED_2);
-    gpio_init(LED_3);
-    gpio_set_dir(LED_1, GPIO_OUT);
-    gpio_set_dir(LED_2, GPIO_OUT);
-    gpio_set_dir(LED_3, GPIO_OUT);
+  adc_init();
+  adc_gpio_init(JOYSTICK_X_PIN);
+  adc_gpio_init(JOYSTICK_Y_PIN);  
+  
+
+
+  uint16_t adc_value_x;
+  uint16_t adc_value_y;  
+  char str_x[5];  // Buffer para armazenar a string
+  char str_y[5];  // Buffer para armazenar a string  
+  
+  bool cor = true;
+  while (true)
+  {
+    adc_select_input(0); // Seleciona o ADC para eixo X. O pino 26 como entrada analógica
+    adc_value_x = adc_read();
+    adc_select_input(1); // Seleciona o ADC para eixo Y. O pino 27 como entrada analógica
+    adc_value_y = adc_read();    
+    sprintf(str_x, "%d", adc_value_x);  // Converte o inteiro em string
+    sprintf(str_y, "%d", adc_value_y);  // Converte o inteiro em string
     
-    gpio_init(BTN_JOY);
-    gpio_set_dir(BTN_JOY, GPIO_IN);
-    gpio_pull_up(BTN_JOY);
-    gpio_set_irq_enabled_with_callback(BTN_JOY, GPIO_IRQ_EDGE_FALL, true, &btn_joy_irq_handler);
-    
-    gpio_init(BTN_A);
-    gpio_set_dir(BTN_A, GPIO_IN);
-    gpio_pull_up(BTN_A);
-    gpio_set_irq_enabled_with_callback(BTN_A, GPIO_IRQ_EDGE_FALL, true, &btn_a_irq_handler);
-    
-    setup_pwm(LED_1);
-    setup_pwm(LED_2);
-    
-    adc_init();
-    adc_gpio_init(JOY_X);
-    adc_gpio_init(JOY_Y);
-    
-    i2c_init(i2c0, 400 * 1000);
-    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
-    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
-    gpio_pull_up(I2C_SDA);
-    gpio_pull_up(I2C_SCL);
-    ssd1306_init(&display, 128, 64, false, 0x3C, i2c0);  // Corrigido    
-    while (1) {
-        adc_select_input(0);
-        int x_val = adc_read();
-        adc_select_input(1);
-        int y_val = adc_read();
-        
-        if (toggle_leds) {
-            set_pwm(LED_1, abs(x_val - 2048) * 2);
-            set_pwm(LED_2, abs(y_val - 2048) * 2);
-        } else {
-            set_pwm(LED_1, 0);
-            set_pwm(LED_2, 0);
-        }
-        
-        update_display(x_val, y_val);
-        sleep_ms(50);
-    }
+    //cor = !cor;
+    // Atualiza o conteúdo do display com animações
+    ssd1306_fill(&ssd, !cor); // Limpa o display
+    ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor); // Desenha um retângulo
+    ssd1306_line(&ssd, 3, 25, 123, 25, cor); // Desenha uma linha
+    ssd1306_line(&ssd, 3, 37, 123, 37, cor); // Desenha uma linha   
+    ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6); // Desenha uma string
+    ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 16); // Desenha uma string
+    ssd1306_draw_string(&ssd, "ADC   JOYSTICK", 10, 28); // Desenha uma string 
+    ssd1306_draw_string(&ssd, "X    Y    PB", 20, 41); // Desenha uma string    
+    ssd1306_line(&ssd, 44, 37, 44, 60, cor); // Desenha uma linha vertical         
+    ssd1306_draw_string(&ssd, str_x, 8, 52); // Desenha uma string     
+    ssd1306_line(&ssd, 84, 37, 84, 60, cor); // Desenha uma linha vertical      
+    ssd1306_draw_string(&ssd, str_y, 49, 52); // Desenha uma string   
+    ssd1306_rect(&ssd, 52, 90, 8, 8, cor, !gpio_get(JOYSTICK_PB)); // Desenha um retângulo  
+    ssd1306_rect(&ssd, 52, 102, 8, 8, cor, !gpio_get(Botao_A)); // Desenha um retângulo    
+    ssd1306_rect(&ssd, 52, 114, 8, 8, cor, !cor); // Desenha um retângulo       
+    ssd1306_send_data(&ssd); // Atualiza o display
+
+
+    sleep_ms(100);
+  }
 }
