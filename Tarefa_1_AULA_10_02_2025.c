@@ -10,7 +10,6 @@
 #include "lib/font.h"
 #include "pico/bootrom.h"
 
-// Definindo as portas e pinos
 #define I2C_PORT i2c1
 #define I2C_SDA 14
 #define I2C_SCL 15
@@ -20,7 +19,7 @@
 #define JOYSTICK_PB 22
 #define Botao_A 5
 #define LED_AZUL_PIN 12
-#define LED_VERMELHO_PIN 13 // Adicionando o LED vermelho
+#define LED_VERMELHO_PIN 13
 #define botaoB 6
 
 // Função de interrupção para modo BOOTSEL com botão B
@@ -80,6 +79,8 @@ int main() {
     char str_x[5];
     char str_y[5];
     bool cor = true;
+    bool led_azul_on = true;
+    bool led_vermelho_on = true;
 
     while (true) {
         adc_select_input(0);
@@ -96,7 +97,6 @@ int main() {
         } else if (adc_value_y > 2048) {
             brilho_azul = (uint8_t)((adc_value_y - 2048) * 255 / 2048);
         }
-        pwm_set_chan_level(pwm_gpio_to_slice_num(LED_AZUL_PIN), PWM_CHAN_A, brilho_azul);
 
         // Atualiza o brilho do LED vermelho com base no eixo X do joystick
         uint8_t brilho_vermelho = 0;
@@ -105,7 +105,21 @@ int main() {
         } else if (adc_value_x > 2048) {
             brilho_vermelho = (uint8_t)((adc_value_x - 2048) * 255 / 2048);
         }
-        pwm_set_chan_level(pwm_gpio_to_slice_num(LED_VERMELHO_PIN), PWM_CHAN_B, brilho_vermelho);
+
+        // Checa o estado do botão A para ativar ou desativar os LEDs
+        static bool botaoA_estado_ant = true;
+        if (gpio_get(Botao_A) == 0 && botaoA_estado_ant) {
+            sleep_ms(200);  // Debounce
+            if (gpio_get(Botao_A) == 0) {
+                led_azul_on = !led_azul_on;
+                led_vermelho_on = !led_vermelho_on;
+            }
+        }
+        botaoA_estado_ant = gpio_get(Botao_A);
+
+        // Ajusta o brilho dos LEDs com base no estado
+        pwm_set_chan_level(pwm_gpio_to_slice_num(LED_AZUL_PIN), PWM_CHAN_A, led_azul_on ? brilho_azul : 0);
+        pwm_set_chan_level(pwm_gpio_to_slice_num(LED_VERMELHO_PIN), PWM_CHAN_B, led_vermelho_on ? brilho_vermelho : 0);
 
         // Atualiza o conteúdo do display com animações
         ssd1306_fill(&ssd, !cor);
